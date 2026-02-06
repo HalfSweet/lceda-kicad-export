@@ -71,6 +71,26 @@ function tryParseJsonString(value: string): unknown | undefined {
 	}
 }
 
+interface PipeSourceSegments {
+	raw: string[];
+	parsed: unknown[];
+}
+
+function parsePipeSource(value: string): PipeSourceSegments | undefined {
+	if (!value.includes('||')) {
+		return undefined;
+	}
+	const raw = value
+		.split('||')
+		.map(item => item.trim())
+		.filter(Boolean);
+	if (raw.length < 2) {
+		return undefined;
+	}
+	const parsed = raw.map(item => tryParseJsonString(item) ?? item);
+	return { raw, parsed };
+}
+
 function normalizeShape(value: unknown): string[] | undefined {
 	if (Array.isArray(value)) {
 		const list = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
@@ -163,6 +183,61 @@ function findHeadAndShape(value: unknown, depth: number): ExtractedHeadAndShape 
 	return undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function extractFromPipeSegments(segments: PipeSourceSegments): ExtractedHeadAndShape | undefined {
+	const byTree = findHeadAndShape(segments.parsed, 8);
+	if (byTree) {
+		return byTree;
+	}
+
+	const headIndex = segments.parsed.findIndex((item) => {
+		return isRecord(item) && typeof item.docType === 'string';
+	});
+	if (headIndex < 0) {
+		return undefined;
+	}
+
+	const head = segments.parsed[headIndex];
+	if (!isRecord(head)) {
+		return undefined;
+	}
+
+	const directShape = normalizeShape(head.shape);
+	if (directShape) {
+		return { head, shape: directShape };
+	}
+
+	const shape: string[] = [];
+	for (let i = headIndex + 1; i < segments.raw.length; i++) {
+		const raw = segments.raw[i];
+		if (!raw) {
+			continue;
+		}
+		const parsed = segments.parsed[i];
+		if (isRecord(parsed)) {
+			if (parsed.type === 'DOCTAIL' || parsed.type === 'DOCHEAD') {
+				continue;
+			}
+			const fromShape = normalizeShape(parsed.shape);
+			if (fromShape?.length) {
+				shape.push(...fromShape);
+			}
+			continue;
+		}
+		if (typeof parsed === 'string') {
+			shape.push(parsed);
+		}
+	}
+
+	if (shape.length === 0) {
+		return undefined;
+	}
+	return { head, shape };
+}
+
 function sourcePreview(source: unknown): string {
 	if (typeof source === 'string') {
 		return source
@@ -189,12 +264,17 @@ function buildExtractDiagnostics(documentSource: unknown, parsed: unknown): stri
 
 export function extractHeadAndShape(documentSource: unknown): ExtractedHeadAndShape {
 	let parsed: unknown;
+	let pipeSegments: PipeSourceSegments | undefined;
 	if (typeof documentSource === 'string') {
 		try {
 			parsed = JSON.parse(documentSource);
 		}
 		catch {
-			throw new Error(`Document source is not valid JSON; preview="${sourcePreview(documentSource)}"`);
+			pipeSegments = parsePipeSource(documentSource);
+			if (!pipeSegments) {
+				throw new Error(`Document source is not valid JSON; preview="${sourcePreview(documentSource)}"`);
+			}
+			parsed = pipeSegments.parsed;
 		}
 	}
 	else {
@@ -202,6 +282,12 @@ export function extractHeadAndShape(documentSource: unknown): ExtractedHeadAndSh
 	}
 
 	const found = findHeadAndShape(parsed, 8);
+	if (!found && pipeSegments) {
+		const fromPipe = extractFromPipeSegments(pipeSegments);
+		if (fromPipe) {
+			return fromPipe;
+		}
+	}
 	if (!found) {
 		throw new Error(`Unable to find { head, shape[] } in document source; ${buildExtractDiagnostics(documentSource, parsed)}`);
 	}
