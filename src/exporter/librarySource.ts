@@ -3,21 +3,17 @@ export type LibraryDocumentType = '2' | '4'; // ELIB_LibraryType.SYMBOL | ELIB_L
 export const LIB_SYMBOL: LibraryDocumentType = '2';
 export const LIB_FOOTPRINT: LibraryDocumentType = '4';
 
-export async function openLibraryAndGetSource(
-	libraryUuid: string,
-	libraryType: LibraryDocumentType,
-	uuid: string,
-): Promise<string> {
+async function openTabAndGetSource(openTab: () => Promise<string | undefined>): Promise<string> {
 	let tabId: string | undefined;
 	try {
-		tabId = await eda.dmt_EditorControl.openLibraryDocument(libraryUuid, libraryType as any, uuid);
+		tabId = await openTab();
 		if (!tabId) {
-			throw new Error('openLibraryDocument failed');
+			throw new Error('open document tab failed');
 		}
 
 		await eda.dmt_EditorControl.activateDocument(tabId);
 		const source = await eda.sys_FileManager.getDocumentSource();
-		if (!source) {
+		if (typeof source !== 'string' || !source.trim()) {
 			throw new Error('getDocumentSource returned empty');
 		}
 		return source;
@@ -30,6 +26,27 @@ export async function openLibraryAndGetSource(
 			catch {}
 		}
 	}
+}
+
+export async function openLibraryAndGetSource(
+	libraryUuid: string,
+	libraryType: LibraryDocumentType,
+	uuid: string,
+): Promise<string> {
+	return await openTabAndGetSource(async () => await eda.dmt_EditorControl.openLibraryDocument(libraryUuid, libraryType as any, uuid));
+}
+
+export async function openLibraryAndGetSourceByLibraryApi(
+	libraryUuid: string,
+	libraryType: LibraryDocumentType,
+	uuid: string,
+): Promise<string> {
+	return await openTabAndGetSource(async () => {
+		if (libraryType === LIB_SYMBOL) {
+			return await eda.lib_Symbol.openInEditor(uuid, libraryUuid);
+		}
+		return await eda.lib_Footprint.openInEditor(uuid, libraryUuid);
+	});
 }
 
 export interface ExtractedHeadAndShape {
@@ -76,12 +93,26 @@ function normalizeShape(value: unknown): string[] | undefined {
 	return undefined;
 }
 
+function normalizeHead(value: unknown): Record<string, unknown> | undefined {
+	if (value && typeof value === 'object' && !Array.isArray(value)) {
+		return value as Record<string, unknown>;
+	}
+	if (typeof value === 'string') {
+		const parsed = tryParseJsonString(value);
+		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+			return parsed as Record<string, unknown>;
+		}
+	}
+	return undefined;
+}
+
 function toHeadAndShape(value: unknown): ExtractedHeadAndShape | undefined {
 	if (!value || typeof value !== 'object') {
 		return undefined;
 	}
 	const candidate = value as any;
-	if (!candidate.head || typeof candidate.head !== 'object') {
+	const head = normalizeHead(candidate.head);
+	if (!head) {
 		return undefined;
 	}
 	const shape = normalizeShape(candidate.shape);
@@ -89,7 +120,7 @@ function toHeadAndShape(value: unknown): ExtractedHeadAndShape | undefined {
 		return undefined;
 	}
 	return {
-		head: candidate.head,
+		head,
 		shape,
 	};
 }
@@ -132,25 +163,42 @@ function findHeadAndShape(value: unknown, depth: number): ExtractedHeadAndShape 
 	return undefined;
 }
 
-function buildExtractDiagnostics(documentSource: string, parsed: unknown): string {
+function sourcePreview(source: unknown): string {
+	if (typeof source === 'string') {
+		return source
+			.slice(0, 160)
+			.replaceAll(/\s+/g, ' ')
+			.trim();
+	}
+	try {
+		return JSON.stringify(source).slice(0, 160);
+	}
+	catch {
+		return String(source).slice(0, 160);
+	}
+}
+
+function buildExtractDiagnostics(documentSource: unknown, parsed: unknown): string {
+	const sourceType = Array.isArray(documentSource) ? 'array' : typeof documentSource;
 	const rootType = Array.isArray(parsed) ? 'array' : typeof parsed;
 	const keys = (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
 		? Object.keys(parsed as Record<string, unknown>).slice(0, 16).join(',')
 		: '';
-	const preview = documentSource
-		.slice(0, 160)
-		.replaceAll(/\s+/g, ' ')
-		.trim();
-	return `root=${rootType}${keys ? ` keys=[${keys}]` : ''} preview="${preview}"`;
+	return `sourceType=${sourceType} root=${rootType}${keys ? ` keys=[${keys}]` : ''} preview="${sourcePreview(documentSource)}"`;
 }
 
-export function extractHeadAndShape(documentSource: string): ExtractedHeadAndShape {
+export function extractHeadAndShape(documentSource: unknown): ExtractedHeadAndShape {
 	let parsed: unknown;
-	try {
-		parsed = JSON.parse(documentSource);
+	if (typeof documentSource === 'string') {
+		try {
+			parsed = JSON.parse(documentSource);
+		}
+		catch {
+			throw new Error(`Document source is not valid JSON; preview="${sourcePreview(documentSource)}"`);
+		}
 	}
-	catch {
-		throw new Error('Document source is not valid JSON');
+	else {
+		parsed = documentSource;
 	}
 
 	const found = findHeadAndShape(parsed, 8);

@@ -5,7 +5,7 @@ import * as extensionConfig from '../../extension.json';
 import { buildEasyEdaComponentData, convertToFootprintMod, convertToSymbolEntry, getCParaString, wrapKiCadSymbolLibrary } from './convert';
 import { t } from './i18n';
 import { fetchDevicesByLcscIds, promptLcscIds } from './lcsc';
-import { extractHeadAndShape, LIB_FOOTPRINT, LIB_SYMBOL, openLibraryAndGetSource } from './librarySource';
+import { extractHeadAndShape, LIB_FOOTPRINT, LIB_SYMBOL, openLibraryAndGetSource, openLibraryAndGetSourceByLibraryApi } from './librarySource';
 import { getSelectedDevicesFromPcb, getSelectedDevicesFromSch } from './selection';
 import { logError, logWarn, showError, showInfo, withProgressBar } from './ui';
 
@@ -129,17 +129,28 @@ async function getLibraryDocCached(
 	if (cached)
 		return cached;
 	const source = await openLibraryAndGetSource(ref.libraryUuid, type, ref.uuid);
-	let extracted: ExtractedHeadAndShape;
 	try {
-		extracted = extractHeadAndShape(source);
+		const extracted = extractHeadAndShape(source);
+		cache.set(cacheKey, extracted);
+		return extracted;
 	}
-	catch (err) {
+	catch (primaryErr) {
 		const kind = type === LIB_SYMBOL ? 'symbol' : 'footprint';
-		const reason = err instanceof Error ? err.message : String(err);
-		throw new Error(`Parse ${kind} source failed (${ref.libraryUuid}/${ref.uuid}): ${reason}`);
+		const primaryReason = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+		logWarn(`Primary ${kind} source parse failed (${ref.libraryUuid}/${ref.uuid}): ${primaryReason}`);
+
+		try {
+			const fallbackSource = await openLibraryAndGetSourceByLibraryApi(ref.libraryUuid, type, ref.uuid);
+			const extracted = extractHeadAndShape(fallbackSource);
+			cache.set(cacheKey, extracted);
+			logWarn(`Fallback ${kind} source parse succeeded (${ref.libraryUuid}/${ref.uuid})`);
+			return extracted;
+		}
+		catch (fallbackErr) {
+			const fallbackReason = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+			throw new Error(`Parse ${kind} source failed (${ref.libraryUuid}/${ref.uuid}); primary=${primaryReason}; fallback=${fallbackReason}`);
+		}
 	}
-	cache.set(cacheKey, extracted);
-	return extracted;
 }
 
 function buildReadme(baseName: string): string {
@@ -166,15 +177,23 @@ function isExternalInteractionError(err: unknown): boolean {
 
 function errorToMessage(err: unknown): string {
 	if (err instanceof Error) {
-		if (err.stack) {
-			return err.stack;
+		const message = err.message?.trim();
+		const stack = err.stack?.trim();
+		if (stack && message && !stack.startsWith(message)) {
+			return `${message}\n${stack}`;
 		}
-		return err.message;
+		if (stack) {
+			return stack;
+		}
+		return message || String(err);
 	}
 	return String(err);
 }
 
 function compactError(err: unknown): string {
+	if (err instanceof Error && err.message?.trim()) {
+		return err.message.split('\n')[0] || 'Unknown error';
+	}
 	const firstLine = errorToMessage(err).split('\n')[0]?.trim();
 	return firstLine || 'Unknown error';
 }
