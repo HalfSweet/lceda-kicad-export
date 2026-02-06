@@ -129,7 +129,15 @@ async function getLibraryDocCached(
 	if (cached)
 		return cached;
 	const source = await openLibraryAndGetSource(ref.libraryUuid, type, ref.uuid);
-	const extracted = extractHeadAndShape(source);
+	let extracted: ExtractedHeadAndShape;
+	try {
+		extracted = extractHeadAndShape(source);
+	}
+	catch (err) {
+		const kind = type === LIB_SYMBOL ? 'symbol' : 'footprint';
+		const reason = err instanceof Error ? err.message : String(err);
+		throw new Error(`Parse ${kind} source failed (${ref.libraryUuid}/${ref.uuid}): ${reason}`);
+	}
 	cache.set(cacheKey, extracted);
 	return extracted;
 }
