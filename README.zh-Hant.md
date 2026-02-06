@@ -23,7 +23,7 @@
 2. 初始化開發環境（安裝依賴）
 
     ```shell
-    npm install
+    pnpm install
     ```
 
 3. 進行些許變更 ...
@@ -31,7 +31,7 @@
 4. 編譯擴展程式
 
     ```shell
-    npm run build
+    pnpm build
     ```
 
 5. 在 嘉立創EDA專業版 中安裝生成在 `./build/dist/` 下的擴展程式

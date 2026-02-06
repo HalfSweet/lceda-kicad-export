@@ -11,7 +11,7 @@
 /.gitignore
 /.npmrc
 /eslint.config.mjs
-/package-lock.json
+/pnpm-lock.yaml
 /package.json
 /tsconfig.json
 .eslintcache

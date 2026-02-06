@@ -31,7 +31,7 @@
 2. 初始化开发环境（安装依赖）
 
     ```shell
-    npm install
+    pnpm install
     ```
 
 3. 进行些许变更 ...
@@ -39,7 +39,7 @@
 4. 编译扩展包
 
     ```shell
-    npm run build
+    pnpm build
     ```
 
 5. 在 嘉立创EDA专业版 中安装生成在 `./build/dist/` 下的扩展包

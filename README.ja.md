@@ -23,7 +23,7 @@
 2. 開発環境の初期化 (依存関係のインストール)
 
     ```shell
-    npm install
+    pnpm install
     ```
 
 3. いくつかの変更を加えます...
@@ -31,7 +31,7 @@
 4. 拡張機能パッケージをコンパイルする
 
     ```shell
-    npm run build
+    pnpm build
     ```
 
 5. EasyEDA Pro Edition の `./build/dist/` の下に生成された拡張パッケージをインストールします

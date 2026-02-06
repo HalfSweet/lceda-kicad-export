@@ -23,7 +23,7 @@ This development tool set contains all the environments and tools for developing
 2. Initializing the development environment (installing dependencies)
 
     ```shell
-    npm install
+    pnpm install
     ```
 
 3. Make your changes ...
@@ -31,7 +31,7 @@ This development tool set contains all the environments and tools for developing
 4. Compile the extension package
 
     ```shell
-    npm run build
+    pnpm build
     ```
 
 5. Install the extension package generated under `./build/dist/` in EasyEDA Pro Edition
