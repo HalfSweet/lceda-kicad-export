@@ -73,140 +73,6 @@ function tryParseJsonString(value: string): unknown | undefined {
 	}
 }
 
-interface PipeSourceSegments {
-	raw: string[];
-	parsed: unknown[];
-}
-
-function parsePipeSource(value: string): PipeSourceSegments | undefined {
-	if (!value.includes('||')) {
-		return undefined;
-	}
-	const raw = value
-		.split('||')
-		.map(item => item.trim())
-		.filter(Boolean);
-	if (raw.length < 2) {
-		return undefined;
-	}
-	const parsed: unknown[] = [];
-	for (const item of raw) {
-		parsed.push(...parsePipeSection(item));
-	}
-	return { raw, parsed };
-}
-
-function extractJsonObjectStrings(value: string): string[] {
-	const out: string[] = [];
-	let depth = 0;
-	let start = -1;
-	let inString = false;
-	let escaped = false;
-
-	for (let i = 0; i < value.length; i++) {
-		const ch = value[i];
-
-		if (inString) {
-			if (escaped) {
-				escaped = false;
-			}
-			else if (ch === '\\') {
-				escaped = true;
-			}
-			else if (ch === '"') {
-				inString = false;
-			}
-			continue;
-		}
-
-		if (ch === '"') {
-			inString = true;
-			continue;
-		}
-		if (ch === '{') {
-			if (depth === 0) {
-				start = i;
-			}
-			depth++;
-			continue;
-		}
-		if (ch === '}') {
-			if (depth > 0) {
-				depth--;
-				if (depth === 0 && start >= 0) {
-					out.push(value.slice(start, i + 1));
-					start = -1;
-				}
-			}
-		}
-	}
-
-	return out;
-}
-
-function parsePipeSection(value: string): unknown[] {
-	const direct = tryParseJsonString(value);
-	if (direct !== undefined) {
-		return [direct];
-	}
-
-	const objectStrings = extractJsonObjectStrings(value);
-	const objectList: unknown[] = [];
-	for (const text of objectStrings) {
-		const parsed = tryParseJsonString(text);
-		if (parsed !== undefined) {
-			objectList.push(parsed);
-		}
-	}
-	if (objectList.length > 0) {
-		return objectList;
-	}
-
-	const fallbackPieces = value
-		.split('|')
-		.map(item => item.trim())
-		.filter(Boolean);
-	return fallbackPieces.length > 0 ? fallbackPieces : [value];
-}
-
-function looksLikeShapeLine(value: string): boolean {
-	const text = value.trim();
-	if (!text) {
-		return false;
-	}
-	if (text.length < 3 || text.length > 4096) {
-		return false;
-	}
-	if (!text.includes('~')) {
-		return false;
-	}
-	return /^[A-Z][A-Z0-9_]{0,16}~/u.test(text);
-}
-
-function collectShapeLines(value: unknown, depth: number, output: Set<string>): void {
-	if (depth <= 0 || value === null || value === undefined) {
-		return;
-	}
-	if (typeof value === 'string') {
-		const trimmed = value.trim();
-		if (looksLikeShapeLine(trimmed)) {
-			output.add(trimmed);
-		}
-		return;
-	}
-	if (Array.isArray(value)) {
-		for (const item of value) {
-			collectShapeLines(item, depth - 1, output);
-		}
-		return;
-	}
-	if (typeof value === 'object') {
-		for (const item of Object.values(value as Record<string, unknown>)) {
-			collectShapeLines(item, depth - 1, output);
-		}
-	}
-}
-
 function normalizeShape(value: unknown): string[] | undefined {
 	if (Array.isArray(value)) {
 		const list = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
@@ -299,70 +165,6 @@ function findHeadAndShape(value: unknown, depth: number): ExtractedHeadAndShape 
 	return undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function extractFromPipeSegments(segments: PipeSourceSegments): ExtractedHeadAndShape | undefined {
-	const byTree = findHeadAndShape(segments.parsed, 8);
-	if (byTree) {
-		return byTree;
-	}
-
-	const headIndex = segments.parsed.findIndex((item) => {
-		return isRecord(item) && typeof item.docType === 'string';
-	});
-	if (headIndex < 0) {
-		return undefined;
-	}
-
-	const head = segments.parsed[headIndex];
-	if (!isRecord(head)) {
-		return undefined;
-	}
-
-	const directShape = normalizeShape(head.shape);
-	if (directShape) {
-		return { head, shape: directShape };
-	}
-
-	const shape = new Set<string>();
-	const rawJsonObjects: string[] = [];
-	for (let i = headIndex + 1; i < segments.parsed.length; i++) {
-		const parsed = segments.parsed[i];
-		if (isRecord(parsed)) {
-			if (parsed.type === 'DOCTAIL' || parsed.type === 'DOCHEAD') {
-				continue;
-			}
-			const fromShape = normalizeShape(parsed.shape);
-			if (fromShape?.length) {
-				for (const line of fromShape) {
-					shape.add(line);
-				}
-			}
-			collectShapeLines(parsed, 6, shape);
-			rawJsonObjects.push(JSON.stringify(parsed));
-			continue;
-		}
-		if (typeof parsed === 'string') {
-			if (looksLikeShapeLine(parsed)) {
-				shape.add(parsed);
-			}
-		}
-	}
-
-	if (shape.size > 0) {
-		return { head, shape: [...shape] };
-	}
-	if (rawJsonObjects.length > 0) {
-		return {
-			head,
-			shape: rawJsonObjects.map(item => `__JSON__${item}`),
-		};
-	}
-	return undefined;
-}
-
 function sourcePreview(source: unknown): string {
 	if (typeof source === 'string') {
 		return source
@@ -387,31 +189,8 @@ function buildExtractDiagnostics(documentSource: unknown, parsed: unknown): stri
 	return `sourceType=${sourceType} root=${rootType}${keys ? ` keys=[${keys}]` : ''} preview="${sourcePreview(documentSource)}"`;
 }
 
-function buildPipeDiagnostics(segments: PipeSourceSegments): string {
-	const summary = segments.parsed.slice(0, 8).map((item, index) => {
-		if (typeof item === 'string') {
-			const preview = item.slice(0, 48).replaceAll(/\s+/g, ' ');
-			return `#${index}:str("${preview}")`;
-		}
-		if (Array.isArray(item)) {
-			return `#${index}:array(len=${item.length})`;
-		}
-		if (item && typeof item === 'object') {
-			const obj = item as Record<string, unknown>;
-			const keys = Object.keys(obj).slice(0, 8).join(',');
-			const kind = typeof obj.type === 'string'
-				? ` type=${obj.type}`
-				: typeof obj.docType === 'string' ? ` docType=${obj.docType}` : '';
-			return `#${index}:obj(keys=[${keys}]${kind})`;
-		}
-		return `#${index}:${typeof item}`;
-	});
-	return `pipeSegments=${segments.raw.length}; ${summary.join(' | ')}`;
-}
-
 export function extractHeadAndShape(documentSource: unknown): ExtractedHeadAndShape {
 	let parsed: unknown;
-	let pipeSegments: PipeSourceSegments | undefined;
 	if (typeof documentSource === 'string') {
 		const v3 = tryExtractHeadAndShapeFromLcedaProV3Source(documentSource);
 		if (v3) {
@@ -421,11 +200,7 @@ export function extractHeadAndShape(documentSource: unknown): ExtractedHeadAndSh
 			parsed = JSON.parse(documentSource);
 		}
 		catch {
-			pipeSegments = parsePipeSource(documentSource);
-			if (!pipeSegments) {
-				throw new Error(`Document source is not valid JSON; preview="${sourcePreview(documentSource)}"`);
-			}
-			parsed = pipeSegments.parsed;
+			throw new Error(`Document source is not supported; preview="${sourcePreview(documentSource)}"`);
 		}
 	}
 	else {
@@ -433,15 +208,8 @@ export function extractHeadAndShape(documentSource: unknown): ExtractedHeadAndSh
 	}
 
 	const found = findHeadAndShape(parsed, 8);
-	if (!found && pipeSegments) {
-		const fromPipe = extractFromPipeSegments(pipeSegments);
-		if (fromPipe) {
-			return fromPipe;
-		}
-	}
 	if (!found) {
-		const pipeInfo = pipeSegments ? `; ${buildPipeDiagnostics(pipeSegments)}` : '';
-		throw new Error(`Unable to find { head, shape[] } in document source; ${buildExtractDiagnostics(documentSource, parsed)}${pipeInfo}`);
+		throw new Error(`Unable to find { head, shape[] } in document source; ${buildExtractDiagnostics(documentSource, parsed)}`);
 	}
 	return found;
 }
