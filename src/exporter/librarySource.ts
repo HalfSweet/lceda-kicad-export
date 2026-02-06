@@ -1,3 +1,5 @@
+import { tryExtractHeadAndShapeFromLcedaProV3Source } from './lcedaProV3';
+
 export type LibraryDocumentType = '2' | '4'; // ELIB_LibraryType.SYMBOL | ELIB_LibraryType.FOOTPRINT
 
 export const LIB_SYMBOL: LibraryDocumentType = '2';
@@ -411,6 +413,10 @@ export function extractHeadAndShape(documentSource: unknown): ExtractedHeadAndSh
 	let parsed: unknown;
 	let pipeSegments: PipeSourceSegments | undefined;
 	if (typeof documentSource === 'string') {
+		const v3 = tryExtractHeadAndShapeFromLcedaProV3Source(documentSource);
+		if (v3) {
+			return v3;
+		}
 		try {
 			parsed = JSON.parse(documentSource);
 		}
