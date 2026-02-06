@@ -87,8 +87,84 @@ function parsePipeSource(value: string): PipeSourceSegments | undefined {
 	if (raw.length < 2) {
 		return undefined;
 	}
-	const parsed = raw.map(item => tryParseJsonString(item) ?? item);
+	const parsed: unknown[] = [];
+	for (const item of raw) {
+		parsed.push(...parsePipeSection(item));
+	}
 	return { raw, parsed };
+}
+
+function extractJsonObjectStrings(value: string): string[] {
+	const out: string[] = [];
+	let depth = 0;
+	let start = -1;
+	let inString = false;
+	let escaped = false;
+
+	for (let i = 0; i < value.length; i++) {
+		const ch = value[i];
+
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+			}
+			else if (ch === '\\') {
+				escaped = true;
+			}
+			else if (ch === '"') {
+				inString = false;
+			}
+			continue;
+		}
+
+		if (ch === '"') {
+			inString = true;
+			continue;
+		}
+		if (ch === '{') {
+			if (depth === 0) {
+				start = i;
+			}
+			depth++;
+			continue;
+		}
+		if (ch === '}') {
+			if (depth > 0) {
+				depth--;
+				if (depth === 0 && start >= 0) {
+					out.push(value.slice(start, i + 1));
+					start = -1;
+				}
+			}
+		}
+	}
+
+	return out;
+}
+
+function parsePipeSection(value: string): unknown[] {
+	const direct = tryParseJsonString(value);
+	if (direct !== undefined) {
+		return [direct];
+	}
+
+	const objectStrings = extractJsonObjectStrings(value);
+	const objectList: unknown[] = [];
+	for (const text of objectStrings) {
+		const parsed = tryParseJsonString(text);
+		if (parsed !== undefined) {
+			objectList.push(parsed);
+		}
+	}
+	if (objectList.length > 0) {
+		return objectList;
+	}
+
+	const fallbackPieces = value
+		.split('|')
+		.map(item => item.trim())
+		.filter(Boolean);
+	return fallbackPieces.length > 0 ? fallbackPieces : [value];
 }
 
 function looksLikeShapeLine(value: string): boolean {
@@ -249,11 +325,8 @@ function extractFromPipeSegments(segments: PipeSourceSegments): ExtractedHeadAnd
 	}
 
 	const shape = new Set<string>();
-	for (let i = headIndex + 1; i < segments.raw.length; i++) {
-		const raw = segments.raw[i];
-		if (!raw) {
-			continue;
-		}
+	const rawJsonObjects: string[] = [];
+	for (let i = headIndex + 1; i < segments.parsed.length; i++) {
 		const parsed = segments.parsed[i];
 		if (isRecord(parsed)) {
 			if (parsed.type === 'DOCTAIL' || parsed.type === 'DOCHEAD') {
@@ -266,6 +339,7 @@ function extractFromPipeSegments(segments: PipeSourceSegments): ExtractedHeadAnd
 				}
 			}
 			collectShapeLines(parsed, 6, shape);
+			rawJsonObjects.push(JSON.stringify(parsed));
 			continue;
 		}
 		if (typeof parsed === 'string') {
@@ -275,10 +349,16 @@ function extractFromPipeSegments(segments: PipeSourceSegments): ExtractedHeadAnd
 		}
 	}
 
-	if (shape.size === 0) {
-		return undefined;
+	if (shape.size > 0) {
+		return { head, shape: [...shape] };
 	}
-	return { head, shape: [...shape] };
+	if (rawJsonObjects.length > 0) {
+		return {
+			head,
+			shape: rawJsonObjects.map(item => `__JSON__${item}`),
+		};
+	}
+	return undefined;
 }
 
 function sourcePreview(source: unknown): string {
