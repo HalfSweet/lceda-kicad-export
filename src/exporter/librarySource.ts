@@ -91,6 +91,44 @@ function parsePipeSource(value: string): PipeSourceSegments | undefined {
 	return { raw, parsed };
 }
 
+function looksLikeShapeLine(value: string): boolean {
+	const text = value.trim();
+	if (!text) {
+		return false;
+	}
+	if (text.length < 3 || text.length > 4096) {
+		return false;
+	}
+	if (!text.includes('~')) {
+		return false;
+	}
+	return /^[A-Z][A-Z0-9_]{0,16}~/u.test(text);
+}
+
+function collectShapeLines(value: unknown, depth: number, output: Set<string>): void {
+	if (depth <= 0 || value === null || value === undefined) {
+		return;
+	}
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		if (looksLikeShapeLine(trimmed)) {
+			output.add(trimmed);
+		}
+		return;
+	}
+	if (Array.isArray(value)) {
+		for (const item of value) {
+			collectShapeLines(item, depth - 1, output);
+		}
+		return;
+	}
+	if (typeof value === 'object') {
+		for (const item of Object.values(value as Record<string, unknown>)) {
+			collectShapeLines(item, depth - 1, output);
+		}
+	}
+}
+
 function normalizeShape(value: unknown): string[] | undefined {
 	if (Array.isArray(value)) {
 		const list = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
@@ -210,7 +248,7 @@ function extractFromPipeSegments(segments: PipeSourceSegments): ExtractedHeadAnd
 		return { head, shape: directShape };
 	}
 
-	const shape: string[] = [];
+	const shape = new Set<string>();
 	for (let i = headIndex + 1; i < segments.raw.length; i++) {
 		const raw = segments.raw[i];
 		if (!raw) {
@@ -223,19 +261,24 @@ function extractFromPipeSegments(segments: PipeSourceSegments): ExtractedHeadAnd
 			}
 			const fromShape = normalizeShape(parsed.shape);
 			if (fromShape?.length) {
-				shape.push(...fromShape);
+				for (const line of fromShape) {
+					shape.add(line);
+				}
 			}
+			collectShapeLines(parsed, 6, shape);
 			continue;
 		}
 		if (typeof parsed === 'string') {
-			shape.push(parsed);
+			if (looksLikeShapeLine(parsed)) {
+				shape.add(parsed);
+			}
 		}
 	}
 
-	if (shape.length === 0) {
+	if (shape.size === 0) {
 		return undefined;
 	}
-	return { head, shape };
+	return { head, shape: [...shape] };
 }
 
 function sourcePreview(source: unknown): string {
@@ -260,6 +303,28 @@ function buildExtractDiagnostics(documentSource: unknown, parsed: unknown): stri
 		? Object.keys(parsed as Record<string, unknown>).slice(0, 16).join(',')
 		: '';
 	return `sourceType=${sourceType} root=${rootType}${keys ? ` keys=[${keys}]` : ''} preview="${sourcePreview(documentSource)}"`;
+}
+
+function buildPipeDiagnostics(segments: PipeSourceSegments): string {
+	const summary = segments.parsed.slice(0, 8).map((item, index) => {
+		if (typeof item === 'string') {
+			const preview = item.slice(0, 48).replaceAll(/\s+/g, ' ');
+			return `#${index}:str("${preview}")`;
+		}
+		if (Array.isArray(item)) {
+			return `#${index}:array(len=${item.length})`;
+		}
+		if (item && typeof item === 'object') {
+			const obj = item as Record<string, unknown>;
+			const keys = Object.keys(obj).slice(0, 8).join(',');
+			const kind = typeof obj.type === 'string'
+				? ` type=${obj.type}`
+				: typeof obj.docType === 'string' ? ` docType=${obj.docType}` : '';
+			return `#${index}:obj(keys=[${keys}]${kind})`;
+		}
+		return `#${index}:${typeof item}`;
+	});
+	return `pipeSegments=${segments.raw.length}; ${summary.join(' | ')}`;
 }
 
 export function extractHeadAndShape(documentSource: unknown): ExtractedHeadAndShape {
@@ -289,7 +354,8 @@ export function extractHeadAndShape(documentSource: unknown): ExtractedHeadAndSh
 		}
 	}
 	if (!found) {
-		throw new Error(`Unable to find { head, shape[] } in document source; ${buildExtractDiagnostics(documentSource, parsed)}`);
+		const pipeInfo = pipeSegments ? `; ${buildPipeDiagnostics(pipeSegments)}` : '';
+		throw new Error(`Unable to find { head, shape[] } in document source; ${buildExtractDiagnostics(documentSource, parsed)}${pipeInfo}`);
 	}
 	return found;
 }
