@@ -1,3 +1,6 @@
 {
+	"KiCad Export": "KiCad 导出",
+	"Export Selected to KiCad...": "导出选中器件到 KiCad...",
+	"Export by LCSC ID...": "按 LCSC 编号导出到 KiCad...",
 	"About...": "关于..."
 }

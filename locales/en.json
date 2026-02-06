@@ -1,4 +1,16 @@
 {
 	"About": "About",
-	"EasyEDA extension SDK v": "EasyEDA extension SDK v${1}"
+	"KiCad Export": "KiCad Export",
+	"KiCad Export v": "KiCad Export v${1}",
+	"EasyEDA extension SDK v": "EasyEDA extension SDK v${1}",
+	"Export Selected": "Export Selected",
+	"Export by LCSC ID": "Export by LCSC ID",
+	"Enter LCSC IDs": "Enter LCSC IDs (e.g. C8734), separated by spaces/commas/new lines.",
+	"No components selected": "No components selected.",
+	"No valid LCSC IDs": "No valid LCSC IDs.",
+	"Export finished": "Export finished.",
+	"Export failed": "Export failed.",
+	"Export summary": "Success: ${1}\\nFailed: ${2}\\nNo 3D: ${3}",
+	"Offline mode, skip 3D": "Offline mode: 3D download skipped.",
+	"3D requires external interaction": "3D download requires External Interaction permission. Enable it in the extension permissions."
 }

@@ -1,8 +1,8 @@
 {
-	"name": "pro-api-sdk",
-	"uuid": "",
-	"displayName": "PRO API SDK",
-	"description": "嘉立创EDA & EasyEDA 专业版扩展 API 开发工具",
+	"name": "lceda-kicad-export",
+	"uuid": "40f2ed5755164860986a2dc0daf5b1ac",
+	"displayName": "KiCad Export",
+	"description": "将指定器件（符号/封装/3D）导出为 KiCad 格式",
 	"version": "1.0.0",
 	"publisher": "",
 	"engines": {
@@ -15,7 +15,9 @@
 	},
 	"categories": "Other",
 	"keywords": [
-		"SDK"
+		"KiCad",
+		"Export",
+		"Converter"
 	],
 	"images": {
 		"logo": "./images/logo.png"
@@ -28,9 +30,14 @@
 	"headerMenus": {
 		"home": [
 			{
-				"id": "API SDK",
-				"title": "API SDK",
+				"id": "KiCad Export",
+				"title": "KiCad Export",
 				"menuItems": [
+					{
+						"id": "Export by LCSC ID",
+						"title": "Export by LCSC ID...",
+						"registerFn": "exportByLcscToKiCad"
+					},
 					{
 						"id": "About",
 						"title": "About...",
@@ -41,9 +48,19 @@
 		],
 		"sch": [
 			{
-				"id": "API SDK",
-				"title": "API SDK",
+				"id": "KiCad Export",
+				"title": "KiCad Export",
 				"menuItems": [
+					{
+						"id": "Export Selected",
+						"title": "Export Selected to KiCad...",
+						"registerFn": "exportSelectedToKiCad"
+					},
+					{
+						"id": "Export by LCSC ID",
+						"title": "Export by LCSC ID...",
+						"registerFn": "exportByLcscToKiCad"
+					},
 					{
 						"id": "About",
 						"title": "About...",
@@ -54,9 +71,19 @@
 		],
 		"pcb": [
 			{
-				"id": "API SDK",
-				"title": "API SDK",
+				"id": "KiCad Export",
+				"title": "KiCad Export",
 				"menuItems": [
+					{
+						"id": "Export Selected",
+						"title": "Export Selected to KiCad...",
+						"registerFn": "exportSelectedToKiCad"
+					},
+					{
+						"id": "Export by LCSC ID",
+						"title": "Export by LCSC ID...",
+						"registerFn": "exportByLcscToKiCad"
+					},
 					{
 						"id": "About",
 						"title": "About...",

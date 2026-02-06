@@ -1,4 +1,16 @@
 {
 	"About": "关于",
-	"EasyEDA extension SDK v": "嘉立创EDA 扩展 SDK v${1}"
+	"KiCad Export": "KiCad 导出",
+	"KiCad Export v": "KiCad 导出 v${1}",
+	"EasyEDA extension SDK v": "嘉立创EDA 扩展 SDK v${1}",
+	"Export Selected": "导出选中器件",
+	"Export by LCSC ID": "按 LCSC 编号导出",
+	"Enter LCSC IDs": "请输入 LCSC 编号（例如 C8734），可用空格/逗号/换行分隔。",
+	"No components selected": "未选中任何器件。",
+	"No valid LCSC IDs": "未输入有效的 LCSC 编号。",
+	"Export finished": "导出完成。",
+	"Export failed": "导出失败。",
+	"Export summary": "成功：${1}\\n失败：${2}\\n无 3D：${3}",
+	"Offline mode, skip 3D": "离线模式：已跳过 3D 下载。",
+	"3D requires external interaction": "下载 3D 需要启用扩展的“外部交互”权限，请在扩展权限中开启。"
 }

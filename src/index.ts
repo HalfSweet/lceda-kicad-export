@@ -12,12 +12,22 @@
  */
 import * as extensionConfig from '../extension.json';
 
+import { exportByLcscToKiCad as exportByLcscToKiCadImpl, exportSelectedToKiCad as exportSelectedToKiCadImpl } from './exporter/exportToKicad';
+
 // eslint-disable-next-line unused-imports/no-unused-vars
 export function activate(status?: 'onStartupFinished', arg?: string): void {}
 
 export function about(): void {
 	eda.sys_Dialog.showInformationMessage(
-		eda.sys_I18n.text('EasyEDA extension SDK v', undefined, undefined, extensionConfig.version),
+		eda.sys_I18n.text('KiCad Export v', undefined, undefined, extensionConfig.version),
 		eda.sys_I18n.text('About'),
 	);
+}
+
+export async function exportSelectedToKiCad(): Promise<void> {
+	await exportSelectedToKiCadImpl();
+}
+
+export async function exportByLcscToKiCad(): Promise<void> {
+	await exportByLcscToKiCadImpl();
 }
