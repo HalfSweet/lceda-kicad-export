@@ -1,11 +1,25 @@
 import { t } from './i18n';
 
+const LOG_PREFIX = '[KiCad Export]';
+
 export function showInfo(content: string, title: string = t('KiCad Export')): void {
 	eda.sys_Dialog.showInformationMessage(content, title);
 }
 
 export function showError(content: string, title: string = t('KiCad Export')): void {
 	eda.sys_Dialog.showInformationMessage(content, title);
+}
+
+export function logInfo(message: string): void {
+	eda.sys_Log.add(`${LOG_PREFIX} ${message}`, 'info' as any);
+}
+
+export function logWarn(message: string): void {
+	eda.sys_Log.add(`${LOG_PREFIX} ${message}`, 'warn' as any);
+}
+
+export function logError(message: string): void {
+	eda.sys_Log.add(`${LOG_PREFIX} ${message}`, 'error' as any);
 }
 
 export async function showInputText(props: {

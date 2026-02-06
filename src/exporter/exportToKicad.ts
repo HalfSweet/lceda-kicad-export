@@ -7,7 +7,7 @@ import { t } from './i18n';
 import { fetchDevicesByLcscIds, promptLcscIds } from './lcsc';
 import { extractHeadAndShape, LIB_FOOTPRINT, LIB_SYMBOL, openLibraryAndGetSource } from './librarySource';
 import { getSelectedDevicesFromPcb, getSelectedDevicesFromSch } from './selection';
-import { showError, showInfo, withProgressBar } from './ui';
+import { logError, logWarn, showError, showInfo, withProgressBar } from './ui';
 
 import { extractPrefix, formatTimestampForFile, isLcscId, sanitizeFileName, sanitizeName, shortenUuid } from './utils';
 import { buildZip } from './zip';
@@ -156,6 +156,33 @@ function isExternalInteractionError(err: unknown): boolean {
 	return msg.includes('外部交互') || msg.toLowerCase().includes('external interaction') || msg.toLowerCase().includes('permission');
 }
 
+function errorToMessage(err: unknown): string {
+	if (err instanceof Error) {
+		if (err.stack) {
+			return err.stack;
+		}
+		return err.message;
+	}
+	return String(err);
+}
+
+function compactError(err: unknown): string {
+	const firstLine = errorToMessage(err).split('\n')[0]?.trim();
+	return firstLine || 'Unknown error';
+}
+
+function formatFailureDetails(failures: string[]): string {
+	if (failures.length === 0) {
+		return '';
+	}
+	const shown = failures.slice(0, 5);
+	const lines = shown.map((item, index) => `${index + 1}. ${item}`);
+	if (failures.length > shown.length) {
+		lines.push(`...and ${failures.length - shown.length} more`);
+	}
+	return lines.join('\n');
+}
+
 async function downloadStepModel(
 	uuid: string,
 ): Promise<Blob> {
@@ -168,158 +195,172 @@ async function downloadStepModel(
 }
 
 export async function exportRefsToKiCadZip(refs: NormalizedComponentRef[]): Promise<void> {
-	await withProgressBar(t('KiCad Export'), async (report) => {
-		report(0, 'Prepare');
+	try {
+		await withProgressBar(t('KiCad Export'), async (report) => {
+			report(0, 'Prepare');
 
-		const { devices, failures: resolveFailures } = await enrichRefs(refs, report);
-		if (devices.length === 0) {
-			showInfo(t('No components selected'));
-			return;
-		}
+			const { devices, failures: resolveFailures } = await enrichRefs(refs, report);
+			if (devices.length === 0) {
+				const detail = formatFailureDetails(resolveFailures);
+				showError(detail ? `${t('Export failed')}\n${detail}` : t('No components selected'));
+				if (detail) {
+					eda.sys_Log.export(['warn', 'error', 'fatalError']);
+				}
+				return;
+			}
 
-		const now = new Date();
-		const baseName = devices.length === 1
-			? sanitizeFileName(`${devices[0].deviceName}_${devices[0].lcscId ?? shortenUuid(devices[0].device.uuid)}`)
-			: sanitizeFileName(`LCEDA_Export_${formatTimestampForFile(now)}`);
+			const now = new Date();
+			const baseName = devices.length === 1
+				? sanitizeFileName(`${devices[0].deviceName}_${devices[0].lcscId ?? shortenUuid(devices[0].device.uuid)}`)
+				: sanitizeFileName(`LCEDA_Export_${formatTimestampForFile(now)}`);
 
-		const usedSymbolNames = new Set<string>();
-		const usedFootprintNames = new Set<string>();
-		const symbolEntries: string[] = [];
-		const zipEntries: ZipFileEntry[] = [];
+			const usedSymbolNames = new Set<string>();
+			const usedFootprintNames = new Set<string>();
+			const symbolEntries: string[] = [];
+			const zipEntries: ZipFileEntry[] = [];
 
-		const docCache = new Map<string, ExtractedHeadAndShape>();
-		const stepCache = new Map<string, { blob?: Blob; fileName?: string; failed?: boolean }>();
+			const docCache = new Map<string, ExtractedHeadAndShape>();
+			const stepCache = new Map<string, { blob?: Blob; fileName?: string; failed?: boolean }>();
 
-		const offline = eda.sys_Environment.isOfflineMode();
-		let externalInteractionBlocked = false;
-		let no3dCount = 0;
-		let exportedCount = 0;
-		const exportFailures: string[] = [...resolveFailures];
+			const offline = eda.sys_Environment.isOfflineMode();
+			let externalInteractionBlocked = false;
+			let no3dCount = 0;
+			let exportedCount = 0;
+			const exportFailures: string[] = [...resolveFailures];
 
-		if (offline) {
-			eda.sys_Log.add(t('Offline mode, skip 3D'));
-		}
+			if (offline) {
+				logWarn(t('Offline mode, skip 3D'));
+			}
 
-		for (let i = 0; i < devices.length; i++) {
-			const d = devices[i];
-			report(20 + Math.floor((i / Math.max(1, devices.length)) * 60), `Convert (${i + 1}/${devices.length})`);
+			for (let i = 0; i < devices.length; i++) {
+				const d = devices[i];
+				report(20 + Math.floor((i / Math.max(1, devices.length)) * 60), `Convert (${i + 1}/${devices.length})`);
 
-			try {
-				const symbolDoc = await getLibraryDocCached(docCache, d.symbol, LIB_SYMBOL);
-				const footprintDoc = await getLibraryDocCached(docCache, d.footprint, LIB_FOOTPRINT);
+				try {
+					const symbolDoc = await getLibraryDocCached(docCache, d.symbol, LIB_SYMBOL);
+					const footprintDoc = await getLibraryDocCached(docCache, d.footprint, LIB_FOOTPRINT);
 
-				const idPart = d.lcscId ?? shortenUuid(d.device.uuid);
-				const symbolName = uniqueName(sanitizeName(`${d.deviceName}_${idPart}`), usedSymbolNames);
+					const idPart = d.lcscId ?? shortenUuid(d.device.uuid);
+					const symbolName = uniqueName(sanitizeName(`${d.deviceName}_${idPart}`), usedSymbolNames);
 
-				const footprintHint = d.footprintNameHint
-					?? getCParaString(footprintDoc.head, 'package')
-					?? getCParaString(footprintDoc.head, 'name')
-					?? `Footprint_${shortenUuid(d.footprint.uuid)}`;
-				const footprintName = uniqueName(sanitizeName(`${footprintHint}_${idPart}`), usedFootprintNames);
+					const footprintHint = d.footprintNameHint
+						?? getCParaString(footprintDoc.head, 'package')
+						?? getCParaString(footprintDoc.head, 'name')
+						?? `Footprint_${shortenUuid(d.footprint.uuid)}`;
+					const footprintName = uniqueName(sanitizeName(`${footprintHint}_${idPart}`), usedFootprintNames);
 
-				const modelUuid = d.model3d?.uuid;
-				const modelName = d.model3d?.name ?? footprintHint;
-				let stepBlob: Blob | undefined;
-				let stepFileName: string | undefined;
+					const modelUuid = d.model3d?.uuid;
+					const modelName = d.model3d?.name ?? footprintHint;
+					let stepBlob: Blob | undefined;
+					let stepFileName: string | undefined;
 
-				if (!offline && modelUuid && !externalInteractionBlocked) {
-					const cached = stepCache.get(modelUuid);
-					if (cached?.blob && cached.fileName) {
-						stepBlob = cached.blob;
-						stepFileName = cached.fileName;
-					}
-					else if (!cached?.failed) {
-						try {
-							stepBlob = await downloadStepModel(modelUuid);
-							stepFileName = sanitizeFileName(`${modelName}_${shortenUuid(modelUuid)}.step`);
-							stepCache.set(modelUuid, { blob: stepBlob, fileName: stepFileName });
+					if (!offline && modelUuid && !externalInteractionBlocked) {
+						const cached = stepCache.get(modelUuid);
+						if (cached?.blob && cached.fileName) {
+							stepBlob = cached.blob;
+							stepFileName = cached.fileName;
 						}
-						catch (err) {
-							stepCache.set(modelUuid, { failed: true });
-							if (isExternalInteractionError(err)) {
-								externalInteractionBlocked = true;
+						else if (!cached?.failed) {
+							try {
+								stepBlob = await downloadStepModel(modelUuid);
+								stepFileName = sanitizeFileName(`${modelName}_${shortenUuid(modelUuid)}.step`);
+								stepCache.set(modelUuid, { blob: stepBlob, fileName: stepFileName });
 							}
-							eda.sys_Log.add(`3D STEP download failed (${modelUuid}): ${String(err)}`);
+							catch (err) {
+								stepCache.set(modelUuid, { failed: true });
+								if (isExternalInteractionError(err)) {
+									externalInteractionBlocked = true;
+								}
+								logWarn(`3D STEP download failed (${modelUuid}): ${compactError(err)}`);
+							}
 						}
 					}
-				}
 
-				if (!stepBlob)
-					no3dCount++;
+					if (!stepBlob)
+						no3dCount++;
 
-				const componentData = buildEasyEdaComponentData({
-					info: {
-						name: d.deviceName,
-						prefix: d.prefix,
-						packageRef: `${baseName}:${footprintName}`,
-						lcscId: d.lcscId,
-						manufacturer: d.manufacturer,
-						description: d.description,
-					},
-					symbol: symbolDoc,
-					footprint: { ...footprintDoc, name: footprintName },
-					model3d: modelUuid ? { uuid: modelUuid, name: modelName } : undefined,
-				});
-
-				const symbolEntry = convertToSymbolEntry(componentData, symbolName);
-				symbolEntries.push(symbolEntry);
-
-				const modelPath = stepBlob && stepFileName
-					? `\${KIPRJMOD}/${baseName}.3dshapes/${stepFileName}`
-					: undefined;
-				const footprintMod = convertToFootprintMod(componentData, {
-					include3DModel: !!(stepBlob && stepFileName),
-					modelPath,
-				});
-
-				zipEntries.push({
-					path: `${baseName}.pretty/${footprintName}.kicad_mod`,
-					data: `${footprintMod}\n`,
-				});
-
-				if (stepBlob && stepFileName) {
-					zipEntries.push({
-						path: `${baseName}.3dshapes/${stepFileName}`,
-						data: stepBlob,
+					const componentData = buildEasyEdaComponentData({
+						info: {
+							name: d.deviceName,
+							prefix: d.prefix,
+							packageRef: `${baseName}:${footprintName}`,
+							lcscId: d.lcscId,
+							manufacturer: d.manufacturer,
+							description: d.description,
+						},
+						symbol: symbolDoc,
+						footprint: { ...footprintDoc, name: footprintName },
+						model3d: modelUuid ? { uuid: modelUuid, name: modelName } : undefined,
 					});
+
+					const symbolEntry = convertToSymbolEntry(componentData, symbolName);
+					symbolEntries.push(symbolEntry);
+
+					const modelPath = stepBlob && stepFileName
+						? `\${KIPRJMOD}/${baseName}.3dshapes/${stepFileName}`
+						: undefined;
+					const footprintMod = convertToFootprintMod(componentData, {
+						include3DModel: !!(stepBlob && stepFileName),
+						modelPath,
+					});
+
+					zipEntries.push({
+						path: `${baseName}.pretty/${footprintName}.kicad_mod`,
+						data: `${footprintMod}\n`,
+					});
+
+					if (stepBlob && stepFileName) {
+						zipEntries.push({
+							path: `${baseName}.3dshapes/${stepFileName}`,
+							data: stepBlob,
+						});
+					}
+
+					exportedCount++;
 				}
-
-				exportedCount++;
+				catch (err) {
+					const concise = compactError(err);
+					exportFailures.push(`${d.deviceName}: ${concise}`);
+					logError(`Export failed (${d.device.uuid}): ${errorToMessage(err)}`);
+				}
 			}
-			catch (err) {
-				exportFailures.push(`${d.deviceName}: ${String(err)}`);
-				eda.sys_Log.add(`Export failed (${d.device.uuid}): ${String(err)}`);
+
+			if (symbolEntries.length === 0) {
+				const detail = formatFailureDetails(exportFailures);
+				showError(detail ? `${t('Export failed')}\n${detail}` : t('Export failed'));
+				eda.sys_Log.export(['warn', 'error', 'fatalError']);
+				return;
 			}
-		}
 
-		if (symbolEntries.length === 0) {
-			showError(t('Export failed'));
-			return;
-		}
+			report(85, 'Package');
 
-		report(85, 'Package');
+			const symbolLib = wrapKiCadSymbolLibrary(symbolEntries, {
+				generator: 'lceda-kicad-export',
+				generatorVersion: extensionConfig.version,
+			});
 
-		const symbolLib = wrapKiCadSymbolLibrary(symbolEntries, {
-			generator: 'lceda-kicad-export',
-			generatorVersion: extensionConfig.version,
+			zipEntries.push({ path: `${baseName}.kicad_sym`, data: symbolLib });
+			zipEntries.push({ path: 'README.txt', data: buildReadme(baseName) });
+
+			const zipBlob = await buildZip(zipEntries);
+			report(95, 'Download');
+			await eda.sys_FileSystem.saveFile(zipBlob, `${baseName}.zip`);
+
+			if (externalInteractionBlocked) {
+				showInfo(t('3D requires external interaction'));
+			}
+
+			showInfo(
+				t('Export summary', exportedCount, exportFailures.length, no3dCount),
+				t('Export finished'),
+			);
 		});
-
-		zipEntries.push({ path: `${baseName}.kicad_sym`, data: symbolLib });
-		zipEntries.push({ path: 'README.txt', data: buildReadme(baseName) });
-
-		const zipBlob = await buildZip(zipEntries);
-		report(95, 'Download');
-		await eda.sys_FileSystem.saveFile(zipBlob, `${baseName}.zip`);
-
-		if (externalInteractionBlocked) {
-			showInfo(t('3D requires external interaction'));
-		}
-
-		showInfo(
-			t('Export summary', exportedCount, exportFailures.length, no3dCount),
-			t('Export finished'),
-		);
-	});
+	}
+	catch (err) {
+		logError(`Fatal export error: ${errorToMessage(err)}`);
+		showError(`${t('Export failed')}\n${compactError(err)}`);
+		eda.sys_Log.export(['warn', 'error', 'fatalError']);
+	}
 }
 
 export async function exportSelectedToKiCad(): Promise<void> {
@@ -346,7 +387,8 @@ export async function exportByLcscToKiCad(): Promise<void> {
 
 	const refs = await fetchDevicesByLcscIds(ids);
 	if (refs.length === 0) {
-		showInfo(t('Export failed'));
+		logWarn(`No device matched LCSC IDs: ${ids.join(', ')}`);
+		showError(`${t('Export failed')}\nLCSC IDs: ${ids.join(', ')}`);
 		return;
 	}
 	await exportRefsToKiCadZip(refs);
